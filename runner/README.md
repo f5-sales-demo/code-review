@@ -55,7 +55,7 @@ label is registered in the repo-root `actionlint.yml` so `actionlint` accepts it
   installed — these are what the reviewer uses to verify PRs.
 - **CA bundle for Node.** Behind a TLS-inspecting proxy, Node-based actions
   (`claude-code-action`) fail with `self-signed certificate in certificate chain`
-  even though `curl` works (curl trusts the macOS keychain; Node uses its own CA
+  even though `curl` works (cURL trusts the macOS keychain; Node uses its own CA
   store). `install-runner.sh` builds a bundle from the keychain and the LaunchAgent
   exports it via `NODE_EXTRA_CA_CERTS`.
 
