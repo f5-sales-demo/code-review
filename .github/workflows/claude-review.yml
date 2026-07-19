@@ -44,6 +44,15 @@ jobs:
       # CALLER repo, which does not contain scripts/parse-verdict.sh or REVIEW.md.
       # Self-provision the reviewer tooling into .review-tooling so the gate and
       # rubric are always available regardless of which repo invoked us.
+      #
+      # ref: main is DELIBERATE (not an unpinned-supply-chain oversight). This is a
+      # first-party checkout of THIS repo, whose reusable workflow is itself consumed
+      # by callers as @main (docs-control governance model). Workflow and tooling
+      # therefore share one trust boundary: code-review's protected main
+      # (enforce_admins + required checks + fork guard). Pinning a SHA here would add
+      # stale-rubric drift and manual bumps without moving that boundary. (The
+      # third-party claude-code-action below IS SHA-pinned — it crosses an org
+      # boundary, which a SHA pin correctly closes.)
       - name: Checkout reviewer tooling
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
