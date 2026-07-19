@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Claude review (agentic, authenticated)
-        uses: anthropics/claude-code-action@6da9ca517d966862907966f30608e9ea33b715e9 # v1
+        uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e # v1
         with:
           # Bearer gateways: this satisfies the action's launch check; real auth
           # is the custom header above. For x-api-key gateways this IS the auth.
