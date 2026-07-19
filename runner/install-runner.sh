@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Idempotent: downloads the macOS runner, lays out the LaunchAgent. Re-runnable.
+# Idempotent machine setup for a native repo-level runner: downloads the macOS
+# runner and builds the CA bundle Node needs behind a TLS-inspecting proxy.
+# Re-runnable. Registration/launch is done by the LaunchAgent (see runner/README.md).
 set -euo pipefail
-: "${ORG:?export ORG}"
 RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner-code-review}"
-VERSION="${RUNNER_VERSION:-2.321.0}" # bump deliberately; see runner/README.md
+VERSION="${RUNNER_VERSION:-2.335.1}" # bump deliberately; see runner/README.md
 ARCH="$([[ "$(uname -m)" == arm64 ]] && echo arm64 || echo x64)"
 mkdir -p "$RUNNER_DIR" && cd "$RUNNER_DIR"
 if [[ ! -x ./run.sh ]]; then
@@ -35,5 +36,16 @@ if ! command -v claude >/dev/null 2>&1; then
   echo "Install the Claude CLI via your trusted channel (e.g. Homebrew, or" >&2
   echo "Anthropic's official install instructions), then re-run this script." >&2
   exit 1
+fi
+# Build the CA bundle so Node-based actions (claude-code-action) trust the corporate
+# / TLS-inspection CA. curl succeeds via the macOS keychain, but Node uses its own
+# CA store and otherwise fails with "self-signed certificate in certificate chain".
+CA_BUNDLE="${CA_BUNDLE:-$HOME/.config/code-review-runner/ca-bundle.pem}"
+mkdir -p "$(dirname "$CA_BUNDLE")"
+if [[ ! -s "$CA_BUNDLE" ]]; then
+  security find-certificate -a -p \
+    /System/Library/Keychains/SystemRootCertificates.keychain >"$CA_BUNDLE"
+  security find-certificate -a -p /Library/Keychains/System.keychain >>"$CA_BUNDLE"
+  echo "Wrote CA bundle ($(grep -c 'BEGIN CERT' "$CA_BUNDLE") certs) to ${CA_BUNDLE}"
 fi
 echo "Runner staged in ${RUNNER_DIR}. Install the LaunchAgent next (see runner/README.md)."

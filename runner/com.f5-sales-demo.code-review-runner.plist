@@ -11,8 +11,10 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>ORG</key><string>REPLACE_ORG</string>
-    <key>RUNNER_GROUP</key><string>REPLACE_RUNNER_GROUP</string>
+    <key>REPO</key><string>REPLACE_REPO</string>
+    <!-- Node-based actions (claude-code-action) must trust the corporate /
+         TLS-inspection CA; curl works via the keychain, Node uses its own store. -->
+    <key>NODE_EXTRA_CA_CERTS</key><string>REPLACE_CA_BUNDLE</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <!-- SessionCreate=true gives the job access to the login keychain (az/gh sessions). -->

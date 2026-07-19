@@ -1,4 +1,4 @@
-# Self-hosted runner (native, as-user, ephemeral)
+# Self-hosted runner (native, as-user, ephemeral, repo-level)
 
 This directory holds the scripts that stand up the native macOS GitHub Actions
 runner used by the reusable `claude-review.yml` workflow. The runner runs **as
@@ -7,12 +7,22 @@ tool inherits the operator's live `az` / `gh` / `terraform` sessions, the login
 keychain, and VPN routing to the internal, VPN-only APIs a review must verify
 against.
 
-- `install-runner.sh` — idempotent installer: downloads and stages the runner
-  binary, and ensures the pinned `claude` CLI is present.
-- `run-ephemeral-loop.sh` — fetches a fresh org registration token, configures
+> **GitHub Free plan → repo-level runners.** GitHub Free does **not** dispatch
+> **organization-level** self-hosted runners to **private** repositories (an
+> online, correctly-labeled org runner never receives the job). Runners are
+> therefore registered at the **repository** level. Each private repo that runs
+> the reviewer needs its own repo-level runner instance (see
+> [Reviewing more than one repo](#reviewing-more-than-one-repo)). Upgrading the
+> org to GitHub Team would enable a single org-level runner instead.
+
+- `install-runner.sh` — idempotent machine setup: downloads and stages the runner
+  binary (with optional SHA-256 verification), confirms the pinned `claude` CLI is
+  present, and builds the CA bundle Node needs behind a TLS-inspecting proxy.
+- `run-ephemeral-loop.sh` — fetches a fresh **repo** registration token, configures
   the runner `--ephemeral`, processes exactly one job, de-registers, and repeats.
 - `com.f5-sales-demo.code-review-runner.plist` — the user LaunchAgent that runs
-  the loop in the login session (`SessionCreate=true` for keychain access).
+  the loop in the login session (`SessionCreate=true` for keychain access), with
+  `REPO` and `NODE_EXTRA_CA_CERTS` in its environment.
 
 The runner registers with the labels `self-hosted,macOS,code-review`, matching
 the workflow's `runs-on: [self-hosted, macOS, code-review]`. The `code-review`
@@ -25,80 +35,84 @@ label is registered in the repo-root `actionlint.yml` so `actionlint` accepts it
   `/opt/homebrew/bin/claude`. The reusable workflow pins
   `path_to_claude_code_executable: /opt/homebrew/bin/claude`, and the LaunchAgent
   puts `/opt/homebrew/bin` first on `PATH`, so `claude` **must** resolve there for
-  the runner user. `install-runner.sh` only falls back to the official install
-  script when no `claude` is found on `PATH`; on this host it is already present
-  via Homebrew, so the fallback does not run.
-- **`gh` authenticated with `admin:org`.** Fetching a runner registration token
-  (`gh api -X POST orgs/$ORG/actions/runners/registration-token`) requires the
-  `admin:org` scope. Before running the loop, the operator must either:
+  the runner user. `install-runner.sh` fails with instructions if `claude` is not
+  found — it never pipes a remote installer to a shell on a credential-bearing host.
+- **A PAT with repo admin**, written to a protected file for the loop. Fetching a
+  repo registration token (`gh api -X POST repos/$REPO/actions/runners/registration-token`)
+  needs repo-admin rights. The loop reads the PAT **only** for that call (inline,
+  never exported), so it does not leak into job steps that run untrusted PR code:
 
   ```bash
-  unset GH_TOKEN                              # so gh uses the keyring, not a stale env token
-  gh auth login -s admin:org,repo,workflow
+  mkdir -p "$HOME/.config/code-review-runner"
+  umask 077
+  printf '%s' "<pat-with-repo-admin>" > "$HOME/.config/code-review-runner/reg.pat"
+  chmod 600 "$HOME/.config/code-review-runner/reg.pat"
   ```
 
-  or export a personal access token that carries `admin:org`:
-
-  ```bash
-  export GH_TOKEN="<pat-with-admin:org>"
-  ```
-
+  (If the file is absent, the loop falls back to the ambient `gh` session, which
+  must then have repo-admin rights itself.)
 - **`az` logged in** (`az login`) and connected to the VPN, and `terraform`
   installed — these are what the reviewer uses to verify PRs.
-- **An org runner group** scoped to selected private repositories only (create it
-  in the org Actions settings, or via `gh api`). Public repositories must be
-  disallowed for the group.
+- **CA bundle for Node.** Behind a TLS-inspecting proxy, Node-based actions
+  (`claude-code-action`) fail with `self-signed certificate in certificate chain`
+  even though `curl` works (cURL trusts the macOS keychain; Node uses its own CA
+  store). `install-runner.sh` builds a bundle from the keychain and the LaunchAgent
+  exports it via `NODE_EXTRA_CA_CERTS`.
 
 ## Operator inputs
 
 Export these once in the shell you run the installer from:
 
 ```bash
-export ORG="f5-sales-demo"           # the GitHub org
-export RUNNER_GROUP="code-review-private"   # the private-repo-scoped runner group
+export REPO="f5-sales-demo/code-review"   # the repo this runner serves (owner/name)
 ```
 
 ## Install
 
-1. Stage the runner and ensure the `claude` CLI is present:
+1. Stage the runner, confirm `claude`, and build the CA bundle:
 
    ```bash
    cd /Users/<you>/GIT/f5-sales-demo/code-review
-   ORG="$ORG" ./runner/install-runner.sh
+   ./runner/install-runner.sh
    ```
 
-   This downloads the runner into `$HOME/actions-runner-code-review` (override
-   with `RUNNER_DIR`) and pins the runner version via `RUNNER_VERSION`.
+   Downloads the runner into `$HOME/actions-runner-code-review` (override with
+   `RUNNER_DIR`), pins the version via `RUNNER_VERSION`, optionally enforces
+   `RUNNER_SHA256`, and writes the CA bundle to
+   `$HOME/.config/code-review-runner/ca-bundle.pem` (override with `CA_BUNDLE`).
 
-2. Copy the loop script next to the runner binary:
+2. Write the registration PAT file (see Prerequisites) if you have not already.
+
+3. Copy the loop script next to the runner binary:
 
    ```bash
    cp runner/run-ephemeral-loop.sh "$HOME/actions-runner-code-review/"
    chmod +x "$HOME/actions-runner-code-review/run-ephemeral-loop.sh"
    ```
 
-3. Install the LaunchAgent, substituting `REPLACE_ORG` and `REPLACE_RUNNER_GROUP`
+4. Install the LaunchAgent, substituting `REPLACE_REPO` and `REPLACE_CA_BUNDLE`
    with the real values, then load it:
 
    ```bash
    plist="$HOME/Library/LaunchAgents/com.f5-sales-demo.code-review-runner.plist"
-   sed -e "s/REPLACE_ORG/$ORG/" -e "s/REPLACE_RUNNER_GROUP/$RUNNER_GROUP/" \
+   sed -e "s#REPLACE_REPO#$REPO#" \
+       -e "s#REPLACE_CA_BUNDLE#$HOME/.config/code-review-runner/ca-bundle.pem#" \
      runner/com.f5-sales-demo.code-review-runner.plist > "$plist"
    launchctl unload "$plist" 2>/dev/null || true
    launchctl load "$plist"
    ```
 
    The `sed` substitution is required: the committed plist ships the literal
-   placeholders `REPLACE_ORG` / `REPLACE_RUNNER_GROUP` so no org detail is
-   committed, and `launchctl` needs the resolved values in the installed copy
-   under `~/Library/LaunchAgents/`.
+   placeholders `REPLACE_REPO` / `REPLACE_CA_BUNDLE` so no host-specific detail is
+   committed, and `launchctl` needs the resolved values in the installed copy under
+   `~/Library/LaunchAgents/`.
 
 ## Verify
 
 The runner should come online in the login session:
 
 ```bash
-gh api orgs/$ORG/actions/runners \
+gh api repos/$REPO/actions/runners \
   --jq '.runners[] | {name, status, labels: [.labels[].name]}'
 ```
 
@@ -106,17 +120,36 @@ Expected: a runner named `<host>-code-review` with `status: online` (or `idle`)
 and labels including `code-review`. If it is offline, check
 `/tmp/code-review-runner.err.log`. If a self-hosted job shows `az` / `gh` as
 unauthenticated, the LaunchAgent is not in the login session — confirm
-`SessionCreate` is set and that the operator is logged into the GUI.
+`SessionCreate` is set and that the operator is logged into the GUI. If a
+Node-based step fails with `self-signed certificate in certificate chain`, the CA
+bundle or `NODE_EXTRA_CA_CERTS` path is wrong.
+
+## Reviewing more than one repo
+
+On GitHub Free each repo needs its own repo-level runner instance. To add another
+repo, run a second instance on the same laptop with a distinct runner directory
+and a distinct LaunchAgent `Label`:
+
+```bash
+export REPO="f5-sales-demo/dns"
+export RUNNER_DIR="$HOME/actions-runner-dns"
+./runner/install-runner.sh
+# ...write reg.pat (same PAT is fine), copy the loop script into $RUNNER_DIR,
+#    and install a LaunchAgent whose Label and StandardOut/ErrPath are unique.
+```
+
+Upgrading the org to GitHub Team removes this per-repo multiplicity (one org-level
+runner serves all repos via a runner group).
 
 ## The 30-day update window
 
 The GitHub Actions runner auto-updates by default; the ephemeral loop re-runs
 `config.sh` every iteration and picks up updates as they are published. If the
-runner is ever configured with `--disableupdate`, GitHub still requires the
-runner application to be updated **within 30 days** of a new release, or the
-runner is dropped and stops accepting jobs. In that case, bump `RUNNER_VERSION`
-in `install-runner.sh`, re-run the installer to re-stage the binary, and reload
-the LaunchAgent within that window. Prefer leaving auto-update enabled.
+runner is ever configured with `--disableupdate`, GitHub still requires the runner
+application to be updated **within 30 days** of a new release, or the runner is
+dropped and stops accepting jobs. In that case, bump `RUNNER_VERSION` in
+`install-runner.sh`, re-run the installer to re-stage the binary, and reload the
+LaunchAgent within that window. Prefer leaving auto-update enabled.
 
 ## Accepted residual risk
 
@@ -126,25 +159,27 @@ single in-job compromise is therefore a full-host compromise: `--ephemeral`
 de-registers the runner after each job but does not wipe the machine. This is an
 **accepted residual risk**, mitigated by defense in depth:
 
-- **Private repositories only.** The org runner group is scoped to selected
-  private repos and disallows public repositories, so no public PR can target the
-  runner.
+- **Private repositories only**, and a **repo-level** runner is inherently scoped
+  to a single repository — no other repo can target it.
 - **Fork guard.** The review job runs only when
-  `github.event.pull_request.head.repo.full_name == github.repository`, so no
-  fork PR ever reaches the runner.
-- **Require approval for outside collaborators.** The org is configured to
-  require manual approval before workflows run for outside collaborators and
-  first-time contributors.
+  `github.event.pull_request.head.repo.full_name == github.repository`, so no fork
+  PR ever reaches the runner.
+- **Require approval for outside collaborators.** Configure the repo/org to require
+  manual approval before workflows run for outside collaborators and first-time
+  contributors.
 - **Least-privilege `--allowedTools`.** The workflow allowlists only the specific
   `gh` / `git` / `az` / `terraform` command families the reviewer needs, rather
   than granting a blanket bypass.
 - **`--permission-mode dontAsk`,** not a blanket permission bypass — the tool
   allowlist above is still enforced.
+- **Registration PAT isolation.** The repo-admin PAT is read from a `0600` file
+  inline for the token fetch only and never exported, so it does not reach job
+  steps that execute untrusted PR code.
 - **`--ephemeral` runner.** Each job runs on a freshly registered runner that
   de-registers on completion, bounding a compromise to a single job.
 - **Terraform is plan / read-only in review.** A review job never runs
   `terraform apply`.
 
-Prompt-injection defense (treating PR diffs, titles, descriptions, and comments
-as untrusted data, never instructions) lives in `../REVIEW.md` and is the primary
+Prompt-injection defense (treating PR diffs, titles, descriptions, and comments as
+untrusted data, never instructions) lives in `../REVIEW.md` and is the primary
 control against the agentic-with-credentials threat model above.
