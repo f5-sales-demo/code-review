@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.f5-sales-demo.code-review-runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/actions-runner-code-review/run-ephemeral-loop.sh"</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ORG</key><string>REPLACE_ORG</string>
+    <key>RUNNER_GROUP</key><string>REPLACE_RUNNER_GROUP</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- SessionCreate=true gives the job access to the login keychain (az/gh sessions). -->
+  <key>SessionCreate</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/code-review-runner.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/code-review-runner.err.log</string>
+</dict>
+</plist>
