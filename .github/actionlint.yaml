@@ -1,0 +1,8 @@
+---
+# Repo-local actionlint config. This repo's self-hosted runner uses a custom
+# "code-review" label (see runner/). Register it so Super-Linter's actionlint
+# accepts `runs-on: [self-hosted, macOS, code-review]`.
+self-hosted-runner:
+  labels: [code-review]
+
+config-variables: null
