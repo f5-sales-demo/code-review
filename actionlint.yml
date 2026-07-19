@@ -1,0 +1,10 @@
+---
+# Repo-root actionlint config (Super-Linter reads linter configs from the repo
+# root: LINTER_RULES_PATH="."). This repo's self-hosted runner uses a custom
+# "code-review" label (see runner/); register it so actionlint accepts
+# `runs-on: [self-hosted, macOS, code-review]`.
+self-hosted-runner:
+  labels:
+    - code-review
+
+config-variables: null

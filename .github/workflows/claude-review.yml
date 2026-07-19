@@ -1,0 +1,98 @@
+---
+name: Claude Review
+on:
+  workflow_call:
+    inputs:
+      verify_cmd:
+        description: "Repo-specific authenticated verification the reviewer should run (e.g. 'cd terraform && terraform init -backend-config=... && terraform plan')."
+        type: string
+        required: false
+        default: ""
+    secrets:
+      F5_GATEWAY_TOKEN:
+        required: true
+      REPO_SETTINGS_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  claude-review:
+    # HARD GUARD: never let a fork PR reach the self-hosted runner.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, code-review]
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_BASE_URL: ${{ vars.F5_GATEWAY_URL }}
+      # Model claude-opus-4-8 with the 1M-token context beta. The F5 gateway auth
+      # style (bearer Authorization header vs x-api-key) is confirmed at pilot
+      # pre-flight (Task 4). If the gateway uses x-api-key, drop the Authorization
+      # line below and rely on anthropic_api_key.
+      ANTHROPIC_CUSTOM_HEADERS: |
+        Authorization: Bearer ${{ secrets.F5_GATEWAY_TOKEN }}
+        anthropic-beta: context-1m-2025-08-07
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # This is a reusable (workflow_call) workflow: the checkout above lands the
+      # CALLER repo, which does not contain scripts/parse-verdict.sh or REVIEW.md.
+      # Self-provision the reviewer tooling into .review-tooling so the gate and
+      # rubric are always available regardless of which repo invoked us.
+      #
+      # ref: main is DELIBERATE (not an unpinned-supply-chain oversight). This is a
+      # first-party checkout of THIS repo, whose reusable workflow is itself consumed
+      # by callers as @main (docs-control governance model). Workflow and tooling
+      # therefore share one trust boundary: code-review's protected main
+      # (enforce_admins + required checks + fork guard). Pinning a SHA here would add
+      # stale-rubric drift and manual bumps without moving that boundary. (The
+      # third-party claude-code-action below IS SHA-pinned — it crosses an org
+      # boundary, which a SHA pin correctly closes.)
+      - name: Checkout reviewer tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: f5-sales-demo/code-review
+          ref: main
+          path: .review-tooling
+          persist-credentials: false
+          token: ${{ secrets.REPO_SETTINGS_TOKEN }}
+
+      - name: Claude review (agentic, authenticated)
+        uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e # v1
+        with:
+          # Bearer gateways: this satisfies the action's launch check; real auth
+          # is the custom header above. For x-api-key gateways this IS the auth.
+          anthropic_api_key: ${{ secrets.F5_GATEWAY_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            FIRST read .review-tooling/REVIEW.md and follow it exactly as your
+            review rubric. The PR head is already checked out.
+
+            Run this repo's authenticated verification if provided:
+              ${{ inputs.verify_cmd }}
+
+            Post inline comments via mcp__github_inline_comment__create_inline_comment
+            (confirmed: true) and one summary via `gh pr comment`. Do not submit
+            review text as messages.
+
+            Finally, write ONLY a JSON object to ./verdict.json matching:
+            {"blocking": bool, "severity_counts": {"high": int, "medium": int, "low": int},
+             "findings": [{"severity":"high|medium|low","title":str,"location":str}]}
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 25
+            --permission-mode dontAsk
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(az account show:*),Bash(az group:*),Bash(terraform init:*),Bash(terraform plan:*),Bash(terraform validate:*),Read,Write"
+          # Pin the CLI to control version drift (see runner install path).
+          path_to_claude_code_executable: /opt/homebrew/bin/claude
+
+      - name: Gate on verdict
+        run: bash .review-tooling/scripts/parse-verdict.sh verdict.json
