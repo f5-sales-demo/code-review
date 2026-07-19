@@ -8,8 +8,3 @@ self-hosted-runner:
     - code-review
 
 config-variables: null
-
-paths:
-  .github/workflows/**/*.yml:
-    ignore:
-      - "SC2016:.+"
