@@ -7,8 +7,13 @@
 # GUI login session so it inherits the login keychain and az/gh sessions.
 set -euo pipefail
 : "${REPO:?export REPO (owner/name, e.g. f5-sales-demo/code-review)}"
-RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner-code-review}"
+# Self-locate per repo (e.g. f5-sales-demo/dns -> ~/actions-runner-dns), matching
+# how provision-repo-runner.sh stages each instance; override with RUNNER_DIR.
+RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner-${REPO##*/}}"
 LABELS="self-hosted,macOS,code-review"
+# Unique per repo so N instances on one host are distinguishable in the runner
+# list (default derives the repo short-name from REPO, e.g. f5-sales-demo/dns -> dns).
+RUNNER_NAME="${RUNNER_NAME:-$(hostname)-${REPO##*/}}"
 # Registration tokens require repo admin. Read a PAT from a protected file and use
 # it ONLY for the token fetch (inline, never exported), so the admin credential
 # does NOT reach ./run.sh or job steps that execute untrusted PR code. Falls back
@@ -30,7 +35,7 @@ while true; do
   rm -f .runner .credentials .credentials_rsaparams 2>/dev/null || true
   TOKEN="$(fetch_token)"
   ./config.sh --url "https://github.com/$REPO" --token "$TOKEN" \
-    --labels "$LABELS" --name "$(hostname)-code-review" \
+    --labels "$LABELS" --name "$RUNNER_NAME" \
     --unattended --replace --ephemeral
   ./run.sh || true # processes one job then exits (ephemeral)
   sleep 2          # brief backoff before re-registering

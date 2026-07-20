@@ -126,20 +126,22 @@ bundle or `NODE_EXTRA_CA_CERTS` path is wrong.
 
 ## Reviewing more than one repo
 
-On GitHub Free each repo needs its own repo-level runner instance. To add another
-repo, run a second instance on the same laptop with a distinct runner directory
-and a distinct LaunchAgent `Label`:
+On GitHub Free each repo needs its own repo-level runner instance. Provision one
+per repo with a single command — it stages the runner, renders a per-repo
+LaunchAgent (unique `Label`, log paths, and `<host>-<repo>` runner name), and
+loads it:
 
 ```bash
-export REPO="f5-sales-demo/dns"
-export RUNNER_DIR="$HOME/actions-runner-dns"
-./runner/install-runner.sh
-# ...write reg.pat (same PAT is fine), copy the loop script into $RUNNER_DIR,
-#    and install a LaunchAgent whose Label and StandardOut/ErrPath are unique.
+bash runner/provision-repo-runner.sh f5-sales-demo/dns
 ```
 
-Upgrading the org to GitHub Team removes this per-repo multiplicity (one org-level
-runner serves all repos via a runner group).
+Re-running is safe (idempotent). Each instance shares the machine-wide review
+concurrency cap (docs-control `scripts/review-slot.sh`), so no more than
+`REVIEW_MAX_SLOTS` (default 5) reviews execute at once no matter how many repos
+are onboarded — the rest queue.
+
+Upgrading the org to GitHub Team would remove this per-repo multiplicity (one
+org-level runner group serving all repos) and let GitHub queue jobs natively.
 
 ## The 30-day update window
 
