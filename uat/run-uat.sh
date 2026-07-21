@@ -83,19 +83,21 @@ cleanup() {
     [ -n "$is" ] || continue
     gh issue close "$is" --repo "$REPO" >/dev/null 2>&1 || true
   done
-  if [ -n "$WT" ] && [ -d "$WT" ]; then
-    git -C "$REPO_DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true
+  if [ -n "$CLONE" ] && [ -d "$CLONE" ]; then
+    rm -rf "$(dirname "$CLONE")" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WT="" # git worktree used to build/push scenario branches (set in setup_worktree)
+CLONE="" # shallow clone of the TARGET repo used to build/push scenario branches
 
 setup_worktree() {
-  git -C "$REPO_DIR" fetch -q origin main
-  WT="$(mktemp -d)/wt"
-  git -C "$REPO_DIR" worktree add -q --detach "$WT" origin/main
+  # Clone the TARGET repo ($REPO), not the repo this script lives in — otherwise
+  # branches push to the wrong repo when UAT_REPO points elsewhere. Shallow is fine.
+  CLONE="$(mktemp -d)/clone"
+  gh repo clone "$REPO" "$CLONE" -- -q --depth 1
+  git -C "$CLONE" config user.email "uat@localhost"
+  git -C "$CLONE" config user.name "uat-harness"
 }
 
 mk_issue() { # <title> ; echoes issue number
@@ -112,12 +114,12 @@ mk_branch_with_file() { # <branch> <path> <contentfile> <commitmsg>
   # the Contents REST API — which is subject to an aggressive content-creation
   # secondary rate limit (403) that a burst of scenarios reliably trips.
   local branch="$1" path="$2" cfile="$3" msg="$4"
-  git -C "$WT" checkout -q -B "$branch" origin/main
-  mkdir -p "$WT/$(dirname "$path")"
-  cp "$cfile" "$WT/$path"
-  git -C "$WT" add "$path"
-  git -C "$WT" -c user.email=uat@localhost -c user.name="uat-harness" commit -q -m "$msg"
-  git -C "$WT" push -q -f origin "$branch"
+  git -C "$CLONE" checkout -q -B "$branch" origin/main
+  mkdir -p "$CLONE/$(dirname "$path")"
+  cp "$cfile" "$CLONE/$path"
+  git -C "$CLONE" add "$path"
+  git -C "$CLONE" commit -q -m "$msg"
+  git -C "$CLONE" push -q -f origin "$branch"
   CREATED_BRANCHES+=("$branch")
 }
 
