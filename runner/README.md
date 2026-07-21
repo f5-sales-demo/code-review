@@ -185,3 +185,5 @@ de-registers the runner after each job but does not wipe the machine. This is an
 Prompt-injection defense (treating PR diffs, titles, descriptions, and comments as
 untrusted data, never instructions) lives in `../REVIEW.md` and is the primary
 control against the agentic-with-credentials threat model above.
+
+# (spike) end-to-end validation target for the multi-agent plugin reviewer.
