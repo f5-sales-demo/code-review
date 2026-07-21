@@ -44,8 +44,8 @@ intended="$(printf '%s' "$cfg" | jq -r --arg r "$REV" \
 echo "Review coverage -- source of truth: docs-control/.github/config/repo-settings.json"
 echo "Base required contexts (all repos): ${base}"
 echo
-printf '%-26s %-12s %-14s %s\n' "REPO (intended gated)" "ENFORCED" "RUNNER" "STATUS"
-printf '%-26s %-12s %-14s %s\n' "---------------------" "--------" "------" "------"
+printf '%-24s %-9s %-9s %-11s %s\n' "REPO (gated)" "ENFORCED" "WORKFLOW" "RUNNER" "STATUS"
+printf '%-24s %-9s %-9s %-11s %s\n' "-----------" "--------" "--------" "------" "------"
 
 drift=0
 for repo in $intended; do
@@ -53,7 +53,14 @@ for repo in $intended; do
   if printf '%s\n' "$live" | grep -qxF "$REV"; then enforced="yes"; else enforced="NO"; fi
   online="$(gj "repos/$ORG/$repo/actions/runners" "[.runners[]?|select(.status==\"online\")]|length")"
   [ -z "$online" ] && online=0
-  if [ "$enforced" = "NO" ]; then
+  # Is the caller workflow actually present on main? A required review with NO
+  # workflow to produce it is a hard DEADLOCK (every PR blocks) -- the failure
+  # mode that a branch-protection-only check misses.
+  wf="$(gj "repos/$ORG/$repo/contents/.github/workflows/code-review.yml?ref=main" '.name')"
+  if [ "$enforced" = "yes" ] && [ -z "$wf" ]; then
+    status="DEADLOCK: review required but caller workflow MISSING -- every PR blocks"
+    drift=1
+  elif [ "$enforced" = "NO" ]; then
     status="DRIFT: config requires review, branch protection does NOT (run enforce-repo-settings)"
     drift=1
   elif [ "$online" -lt 1 ]; then
@@ -62,7 +69,9 @@ for repo in $intended; do
   else
     status="OK"
   fi
-  printf '%-26s %-12s %-14s %s\n' "$repo" "$enforced" "${online} online" "$status"
+  wfcol="yes"
+  [ -z "$wf" ] && wfcol="NO"
+  printf '%-24s %-9s %-9s %-11s %s\n' "$repo" "$enforced" "$wfcol" "${online} online" "$status"
 done
 
 # Reverse drift: a repo the config does NOT intend, yet whose LIVE protection enforces review.
