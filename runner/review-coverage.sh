@@ -16,9 +16,13 @@ set -euo pipefail
 ORG="${ORG:-f5-sales-demo}"
 REV="review / claude-review"
 PRS=0
+PERF=0
 if [ "${1:-}" = "--prs" ]; then
   PRS="${2:-8}"
   case "$PRS" in '' | *[!0-9]*) PRS=8 ;; esac # ignore non-numeric arg
+elif [ "${1:-}" = "--perf" ]; then
+  PERF="${2:-10}"
+  case "$PERF" in '' | *[!0-9]*) PERF=10 ;; esac # ignore non-numeric arg
 fi
 
 # gh api -> jq, printing output ONLY on success; EMPTY on any error (404 "not
@@ -40,6 +44,45 @@ base="$(printf '%s' "$cfg" | jq -r '([.branch_protection] | flatten | .[0].requi
 # review context (the base list never contains it, so this is exact).
 intended="$(printf '%s' "$cfg" | jq -r --arg r "$REV" \
   '.repo_overrides // {} | to_entries[] | select((.value.additional_contexts // []) | index($r)) | .key' | sort)"
+
+# --perf: performance/health report — per gated repo, aggregate the last N Code
+# Review runs (outcome + latency). Answers "how is the reviewer performing?".
+# `success` = passed or dark-observed; `failure` = blocked (enforced 🔴).
+if [ "$PERF" -gt 0 ]; then
+  echo "Reviewer performance -- last ${PERF} Code Review run(s) per gated repo"
+  echo "(success = passed/dark; failure = blocked on 🔴 when enforced)"
+  echo
+  printf '%-24s %-6s %-6s %-6s %-8s %-8s\n' "REPO" "RUNS" "PASS" "BLOCK" "p50" "p90"
+  printf '%-24s %-6s %-6s %-6s %-8s %-8s\n' "----" "----" "----" "-----" "---" "---"
+  for repo in $intended; do
+    data="$(gh run list --repo "$ORG/$repo" --workflow code-review.yml --limit "$PERF" \
+      --json conclusion,createdAt,updatedAt 2>/dev/null || echo '[]')"
+    [ -z "$data" ] && data='[]'
+    printf '%s' "$data" | ORG_REPO="$repo" python3 -c '
+import sys, json, os, math, datetime
+rows = json.load(sys.stdin)
+def secs(a, b):
+    try:
+        f = datetime.datetime.fromisoformat
+        return (f(b.replace("Z", "+00:00")) - f(a.replace("Z", "+00:00"))).total_seconds()
+    except Exception:
+        return None
+durs = sorted(d for d in (secs(r.get("createdAt",""), r.get("updatedAt","")) for r in rows) if d is not None)
+n = len(rows)
+succ = sum(1 for r in rows if r.get("conclusion") == "success")
+fail = sum(1 for r in rows if r.get("conclusion") == "failure")
+def pct(p):
+    if not durs:
+        return "-"
+    i = min(len(durs) - 1, int(math.ceil(p / 100 * len(durs)) - 1))
+    return "%ds" % durs[i]
+print("%-24s %-6d %-6d %-6d %-8s %-8s" % (os.environ["ORG_REPO"], n, succ, fail, pct(50), pct(90)))
+' 2>/dev/null || printf '%-24s (no data)\n' "$repo"
+  done
+  echo
+  echo "Tip: a repo with BLOCK>0 has recent PRs stopped on a 🔴 finding; p90 shows tail latency (incl. slot-queue wait)."
+  exit 0
+fi
 
 echo "Review coverage -- source of truth: docs-control/.github/config/repo-settings.json"
 echo "Base required contexts (all repos): ${base}"
