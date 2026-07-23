@@ -1,0 +1,62 @@
+---
+name: Reviewer Health
+
+# Scheduled watchdog for the self-hosted reviewer fleet. review-coverage.sh is
+# pure github.com API (branch protection, runners, runs), so this runs on a
+# GitHub-hosted runner — it stays up when the laptop hosting the self-hosted
+# runners is down, which is exactly when "no online runner" must be detected.
+on:
+  schedule:
+    # Off-:00 minute so this doesn't pile onto the top-of-hour scheduler rush.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: reviewer-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    name: Reviewer coverage watchdog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Confirm twice ~60s apart: review-coverage.sh's gj() treats an API error
+      # as empty (== drift), so a single transient github.com 429/5xx could
+      # otherwise raise a false "no online runner". Only both-fail => red.
+      - name: Run coverage report
+        id: cov
+        env:
+          GH_TOKEN: ${{ secrets.REPO_SETTINGS_TOKEN }}
+        run: |
+          set +e
+          bash runner/review-coverage.sh >report.txt 2>&1
+          rc1=$?
+          if [ "$rc1" -ne 0 ]; then
+            sleep 60
+            bash runner/review-coverage.sh >report.txt 2>&1
+            rc2=$?
+          else
+            rc2=0
+          fi
+          if [ "$rc1" -ne 0 ] && [ "$rc2" -ne 0 ]; then
+            echo "state=red" >>"$GITHUB_OUTPUT"
+          else
+            echo "state=green" >>"$GITHUB_OUTPUT"
+          fi
+          echo "----- coverage report -----"
+          cat report.txt
+
+      - name: Alert on drift (deduped issue)
+        env:
+          GH_TOKEN: ${{ secrets.REPO_SETTINGS_TOKEN }}
+          STATE: ${{ steps.cov.outputs.state }}
+        run: bash runner/health-alert.sh "$STATE" report.txt
