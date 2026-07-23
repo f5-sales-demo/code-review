@@ -16,11 +16,20 @@
          TLS-inspection CA; curl works via the keychain, Node uses its own store. -->
     <key>NODE_EXTRA_CA_CERTS</key><string>REPLACE_CA_BUNDLE</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- The loop reads these to bound its OWN launchd logs (in-place truncation).
+         Values mirror StandardOut/ErrorPath below; provision-repo-runner.sh
+         rewrites all four to the per-repo paths with the same sed. -->
+    <key>RUNNER_OUT_LOG</key><string>/tmp/code-review-runner.out.log</string>
+    <key>RUNNER_ERR_LOG</key><string>/tmp/code-review-runner.err.log</string>
   </dict>
   <!-- SessionCreate=true gives the job access to the login keychain (az/gh sessions). -->
   <key>SessionCreate</key><true/>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <!-- Defense-in-depth: if the loop ever crashes BEFORE reaching its own backoff
+       (e.g. a bad cd or a corrupt install dir), cap launchd's relaunch cadence so
+       it cannot hot-loop. Normal registration backoff is handled in the script. -->
+  <key>ThrottleInterval</key><integer>30</integer>
   <key>StandardOutPath</key><string>/tmp/code-review-runner.out.log</string>
   <key>StandardErrorPath</key><string>/tmp/code-review-runner.err.log</string>
 </dict>
