@@ -27,7 +27,7 @@ overload. A full run takes roughly as long as N reviews (minutes each).
 ## Scenario matrix
 
 | # | Scenario | Branch | Linked issue | Expected `check / Check linked issues` | Expected `review / claude-review` |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | S1 | Clean change + linked issue | `uat/clean-<run>` | yes (`Closes #`) | pass | pass |
 | S2 | No linked issue | `uat/no-issue-<run>` | no | **fail** | pass |
 | S3 | Planted high-severity bug (inverted deploy guard) | `uat/bug-<run>` | yes | pass | **fail** |
