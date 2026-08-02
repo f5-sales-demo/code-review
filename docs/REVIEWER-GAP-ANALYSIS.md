@@ -64,7 +64,7 @@ Syft/Grype (security/supply chain).
 ## Cross-reference (✅ covered · 🟨 partial · ❌ gap)
 
 | Area | Status | Evidence / note |
-|---|---|---|
+| --- | --- | --- |
 | Logic/security bug detection (A1,A7) | ✅ | Bug agents 3+4 (opus) + validation pass — `plugins/f5-review/.../commands/code-review.md` |
 | Cross-file / whole-repo context (A2,A3) | 🟨 | Bug agents are deliberately diff-only; no codebase-graph pass |
 | Data-flow/taint, rules engine (A5,A6) | ❌ | No CodeQL/Semgrep/Sonar (grep-confirmed fleet-wide) |
